@@ -1,0 +1,14 @@
+# Mirrors [project].dependencies in pyproject.toml — keep both in sync.
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.6.0
+python-dotenv>=1.0.0
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29.0
+openai>=1.40.0
+anthropic>=0.34.0
+google-genai>=0.3.0
+qdrant-client>=1.9.0
+httpx>=0.27.0
+beautifulsoup4>=4.12.0
+pypdf>=4.0.0
