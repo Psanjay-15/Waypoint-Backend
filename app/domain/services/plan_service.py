@@ -8,11 +8,9 @@ from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import DISCLAIMER, TASK_DONE
-from app.core.exceptions import NotFoundError, OwnershipError, UnknownStateError
+from app.core.exceptions import NotFoundError, OwnershipError
 from app.db.models import MovePlan, PlanTask
-from app.db.repositories.law_fact_repo import law_fact_repo
 from app.db.repositories.plan_repo import plan_repo
-from app.db.repositories.state_repo import state_repo
 from app.domain.schemas.plan import (
     CreatePlanRequest,
     MovePlanResponse,
@@ -20,8 +18,13 @@ from app.domain.schemas.plan import (
     PlanTaskOut,
     TaskUpdateResponse,
 )
-from app.domain.services.retrieval_service import _to_chunk
 from app.llm.factory import run_with_fallback
+
+# Curated facts are no longer used to ground the plan — the LLM generates it
+# directly from the corridor + quiz. (plan_repo still persists the user's plan.)
+# from app.db.repositories.law_fact_repo import law_fact_repo
+# from app.db.repositories.state_repo import state_repo
+# from app.domain.services.retrieval_service import _to_chunk
 
 URGENT_OFFSET_DAYS = 30
 
@@ -43,18 +46,10 @@ class PlanService:
     async def create_plan(
         self, db: AsyncSession, req: CreatePlanRequest, device_id: str
     ) -> MovePlanResponse:
-        for code in (req.from_state, req.to_state):
-            if await state_repo.get(db, code) is None:
-                raise UnknownStateError(f"Unknown or unsupported state '{code}'")
-
-        facts = await law_fact_repo.list_for_corridor(db, req.from_state, req.to_state)
-        chunks = [_to_chunk(f) for f in facts]
-        fact_by_id = {str(f.id): f for f in facts}
-
         generated, _provider = await run_with_fallback(
             None,
             lambda p: p.generate_plan(
-                req.quiz, req.move_date, req.from_state, req.to_state, chunks, req.city
+                req.quiz, req.move_date, req.from_state, req.to_state, [], req.city
             ),
         )
 
@@ -67,7 +62,6 @@ class PlanService:
         )
         ordered = sorted(generated.tasks, key=lambda t: t.deadline_offset_days)
         for i, task in enumerate(ordered):
-            fact = fact_by_id.get(task.fact_id) if task.fact_id else None
             plan.tasks.append(
                 PlanTask(
                     title=task.title,
@@ -75,7 +69,7 @@ class PlanService:
                     category=task.category,
                     deadline_offset_days=task.deadline_offset_days,
                     due_date=req.move_date + timedelta(days=task.deadline_offset_days),
-                    source_url=fact.source_url if fact else None,
+                    source_url=None,
                     sort_order=i,
                 )
             )

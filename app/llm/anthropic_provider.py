@@ -115,6 +115,9 @@ class AnthropicProvider(LLMProvider):
             CITY_FIT_SYSTEM, user_prompt, CityFit, "city_fit", 512
         )
 
+    async def structured(self, system, user, schema, max_tokens: int = 2048):
+        return await self._call_tool(system, user, schema, "extract_data", max_tokens)
+
     async def general_answer(
         self, question: str, from_state: str | None, to_state: str | None
     ) -> str:

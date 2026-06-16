@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import date
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from app.domain.schemas.chat import ContextChunk
 from app.domain.schemas.cost import CostNarrative
 from app.domain.schemas.livability import CityFit
 from app.domain.schemas.plan import GeneratedPlan, QuizAnswers
+
+SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
 class LLMProvider(ABC):
@@ -65,6 +70,14 @@ class LLMProvider(ABC):
     async def assess_city(self, user_prompt: str) -> CityFit:
         """Summarize who a place suits, grounded in the safety + rent numbers in
         user_prompt (CITY_FIT_SYSTEM)."""
+        ...
+
+    @abstractmethod
+    async def structured(
+        self, system: str, user: str, schema: type[SchemaT], max_tokens: int = 2048
+    ) -> SchemaT:
+        """Generic structured-output call: fill `schema` from the prompt. Used by
+        the LLM-direct feature data services (compare, cost, safety)."""
         ...
 
     @staticmethod

@@ -35,6 +35,26 @@ class CityFit(BaseModel):
     )
 
 
+class LlmStateSafety(BaseModel):
+    state_code: str
+    state_name: str
+    violent_per_100k: int
+    property_per_100k: int
+    source: str
+    source_url: str
+    year: int
+
+
+class LlmSafetyResult(BaseModel):
+    from_safety: LlmStateSafety
+    to_safety: LlmStateSafety
+    rent_source: str
+    rent_source_url: str
+    city_rents: list[CityRent]
+    fit_summary: str
+    fit_best_for: list[str]
+
+
 class LivabilityRequest(BaseModel):
     from_state: str
     to_state: str

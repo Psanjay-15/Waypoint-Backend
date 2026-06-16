@@ -95,6 +95,9 @@ class OpenAIProvider(LLMProvider):
     async def assess_city(self, user_prompt: str) -> CityFit:
         return await self._parse(CITY_FIT_SYSTEM, user_prompt, CityFit, max_tokens=512)
 
+    async def structured(self, system, user, schema, max_tokens: int = 2048):
+        return await self._parse(system, user, schema, max_tokens=max_tokens)
+
     async def general_answer(
         self, question: str, from_state: str | None, to_state: str | None
     ) -> str:

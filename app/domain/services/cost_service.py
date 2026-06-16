@@ -1,130 +1,84 @@
-"""Cost-of-moving estimator.
+"""Cost-of-moving estimate — fetched live from the LLM.
 
-Pass 1 — deterministic, sourced math: income/property/sales tax, take-home,
-         BEA cost-of-living %, salary equivalence.
-Pass 2 — LLM (best-effort): monthly living-cost estimates + explanation,
-         grounded by the Pass-1 numbers. Degrades to null if no provider.
+The previous deterministic implementation (cost_profiles.json + tax-bracket math
++ BEA RPP) is preserved in git history; the curated data file is kept in place
+but no longer read. All figures here are AI estimates, not tax advice.
 """
 
 from __future__ import annotations
 
-import json
+import time
 
-from app.config import settings
-from app.core.exceptions import LLMError, UnknownStateError
-from app.core.logging import get_logger
 from app.domain.schemas.cost import (
     CostRequest,
     CostResponse,
     LivingEstimateOut,
+    LlmCostResult,
     StateTaxBreakdown,
     TaxSource,
 )
 from app.llm.factory import run_with_fallback
-from app.llm.prompts import build_cost_prompt
+from app.llm.prompts import COST_DIRECT_SYSTEM, build_cost_direct_prompt
 
-log = get_logger(__name__)
+# Generic "where to verify" references (LLM mode has no per-figure citation).
+_SOURCES = TaxSource(
+    income="https://taxfoundation.org/data/all/state/state-income-tax-rates/",
+    property="https://taxfoundation.org/data/all/state/property-taxes-by-state-county/",
+    sales="https://taxfoundation.org/data/all/state/state-and-local-sales-tax-rates/",
+    col="https://www.bea.gov/data/prices-inflation/regional-price-parities-state-and-metro-area",
+)
 
-TAXABLE_SHARE = 0.5
-
-
-def _load_profiles() -> dict:
-    from app.config import SERVER_ROOT
-
-    path = SERVER_ROOT / "app" / "data" / "cost_profiles.json"
-    try:
-        data = json.loads(path.read_text())
-    except FileNotFoundError:
-        log.warning("cost_profiles.json missing — cost endpoint will report unsupported states")
-        return {}
-    return {k: v for k, v in data.items() if not k.startswith("_")}
+_CACHE_TTL = 60 * 30
+_cache: dict[str, tuple[float, object]] = {}
 
 
-_PROFILES = _load_profiles()
+def _breakdown(c) -> StateTaxBreakdown:
+    return StateTaxBreakdown(
+        state_code=c.state_code,
+        state_name=c.state_name,
+        income_tax=c.income_tax,
+        property_tax=c.property_tax,
+        sales_tax=c.sales_tax,
+        total_tax=c.income_tax + c.property_tax + c.sales_tax,
+        take_home=c.take_home,
+        rpp_index=c.rpp_index,
+        sources=_SOURCES,
+    )
 
 
-def _income_tax(salary: float, filing: str, profile: dict) -> float:
-    it = profile["income_tax"]
-    kind = it["type"]
-    if kind == "none":
-        return 0.0
-    if kind == "flat":
-        return salary * it["rate"]
-    brackets = it.get(filing) or it.get("single")
-    tax = 0.0
-    lower = 0.0
-    for upper, rate in brackets:
-        upper_eff = upper if upper is not None else float("inf")
-        if salary <= lower:
-            break
-        taxable = min(salary, upper_eff) - lower
-        tax += taxable * rate
-        lower = upper_eff
-    return tax
-
-
-def _equivalent_salary(
-    target_real: float, filing: str, profile: dict, rpp_to: float
-) -> float:
-    """Solve for gross salary in the destination whose take-home, deflated by the
-    destination price index, equals target_real. Bisection handles brackets."""
-    lo, hi = 0.0, 5_000_000.0
-    for _ in range(60):
-        mid = (lo + hi) / 2
-        take_home = mid - _income_tax(mid, filing, profile)
-        real = take_home / (rpp_to / 100.0)
-        if real < target_real:
-            lo = mid
-        else:
-            hi = mid
-    return (lo + hi) / 2
+def _living(c) -> LivingEstimateOut:
+    return LivingEstimateOut(
+        state_code=c.state_code,
+        monthly_rent=c.monthly_rent,
+        monthly_groceries=c.monthly_groceries,
+        monthly_utilities=c.monthly_utilities,
+        monthly_total=c.monthly_rent + c.monthly_groceries + c.monthly_utilities,
+    )
 
 
 class CostService:
-    def _breakdown(self, code: str, req: CostRequest) -> StateTaxBreakdown:
-        profile = _PROFILES[code]
-        income = _income_tax(req.salary, req.filing, profile)
-        property_tax = (
-            (req.home_value or 0) * profile["property_tax_pct"] / 100
-            if req.housing == "own"
-            else 0.0
-        )
-        spending = (
-            req.monthly_spending
-            if req.monthly_spending is not None
-            else req.salary * 0.35 / 12
-        )
-        sales = spending * 12 * TAXABLE_SHARE * profile["sales_tax_pct"] / 100
-        total_tax = income + property_tax + sales
-        return StateTaxBreakdown(
-            state_code=code,
-            state_name=profile["name"],
-            income_tax=round(income),
-            property_tax=round(property_tax),
-            sales_tax=round(sales),
-            total_tax=round(total_tax),
-            take_home=round(req.salary - income),
-            rpp_index=profile["rpp_index"],
-            sources=TaxSource(**profile["sources"]),
-        )
-
     async def compare(self, req: CostRequest) -> CostResponse:
-        for code in (req.from_state, req.to_state):
-            if code not in _PROFILES:
-                raise UnknownStateError(f"No cost data for state '{code}'")
+        key = (
+            f"cost:{req.from_state}|{req.to_state}|{req.city or ''}|{int(req.salary)}"
+            f"|{req.filing}|{req.housing}|{int(req.home_value or 0)}|{int(req.monthly_spending or 0)}"
+        )
+        cached = _cache.get(key)
+        if cached and time.time() - cached[0] < _CACHE_TTL:
+            return cached[1]  # type: ignore[return-value]
 
-        from_b = self._breakdown(req.from_state, req)
-        to_b = self._breakdown(req.to_state, req)
-
-        col_pct = (to_b.rpp_index - from_b.rpp_index) / from_b.rpp_index
-        real_from = from_b.take_home / (from_b.rpp_index / 100.0)
-        equiv = _equivalent_salary(
-            real_from, req.filing, _PROFILES[req.to_state], to_b.rpp_index
+        prompt = build_cost_direct_prompt(
+            req.from_state, req.to_state, req.salary, req.filing,
+            req.housing, req.home_value, req.monthly_spending, req.city,
+        )
+        result, _ = await run_with_fallback(
+            None, lambda p: p.structured(COST_DIRECT_SYSTEM, prompt, LlmCostResult)
         )
 
-        living, explanation, available = await self._llm_estimates(req, from_b, to_b)
+        from_b = _breakdown(result.from_cost)
+        to_b = _breakdown(result.to_cost)
+        col_pct = (to_b.rpp_index - from_b.rpp_index) / from_b.rpp_index if from_b.rpp_index else 0.0
 
-        return CostResponse(
+        response = CostResponse(
             from_state=req.from_state,
             to_state=req.to_state,
             city=req.city,
@@ -134,65 +88,17 @@ class CostService:
             breakdown=[from_b, to_b],
             tax_delta=to_b.total_tax - from_b.total_tax,
             col_pct_diff=round(col_pct, 4),
-            salary_equivalence=round(equiv),
-            living_estimates=living,
-            explanation=explanation,
-            estimates_available=available,
+            salary_equivalence=result.salary_equivalence,
+            living_estimates=[_living(result.from_cost), _living(result.to_cost)],
+            explanation=result.explanation,
+            estimates_available=True,
             disclaimer=(
-                "Estimates only — not tax, financial, or market advice. Tax and price-index "
-                "figures are sourced; living-cost figures are AI estimates. Verify with a "
-                "professional before deciding."
+                "AI-estimated, not tax/financial advice. Figures are approximate — verify with a "
+                "professional and the linked references before deciding."
             ),
         )
-
-    async def _llm_estimates(self, req: CostRequest, from_b, to_b):
-        if not settings.available_providers:
-            return None, None, False
-        prompt = build_cost_prompt(
-            from_b.state_name,
-            to_b.state_name,
-            req.salary,
-            req.housing,
-            self._facts(from_b),
-            self._facts(to_b),
-            req.city,
-        )
-        try:
-            narrative, _ = await run_with_fallback(
-                None, lambda p: p.estimate_costs(prompt)
-            )
-        except LLMError as exc:
-            log.warning("cost estimate LLM failed, returning sourced-only: %s", exc)
-            return None, None, False
-
-        out = []
-        for est, code in (
-            (narrative.from_estimate, req.from_state),
-            (narrative.to_estimate, req.to_state),
-        ):
-            total = est.monthly_rent + est.monthly_groceries + est.monthly_utilities
-            out.append(
-                LivingEstimateOut(
-                    state_code=code,
-                    monthly_rent=est.monthly_rent,
-                    monthly_groceries=est.monthly_groceries,
-                    monthly_utilities=est.monthly_utilities,
-                    monthly_total=total,
-                )
-            )
-        return out, narrative.explanation, True
-
-    @staticmethod
-    def _facts(b: StateTaxBreakdown) -> dict:
-        return {
-            "state_code": b.state_code,
-            "name": b.state_name,
-            "rpp_index": b.rpp_index,
-            "income_tax": b.income_tax,
-            "property_tax": b.property_tax,
-            "sales_tax": b.sales_tax,
-            "take_home": b.take_home,
-        }
+        _cache[key] = (time.time(), response)
+        return response
 
 
 cost_service = CostService()

@@ -99,6 +99,9 @@ class GeminiProvider(LLMProvider):
     async def assess_city(self, user_prompt: str) -> CityFit:
         return await self._generate(CITY_FIT_SYSTEM, user_prompt, CityFit)
 
+    async def structured(self, system, user, schema, max_tokens: int = 2048):
+        return await self._generate(system, user, schema)
+
     async def general_answer(
         self, question: str, from_state: str | None, to_state: str | None
     ) -> str:

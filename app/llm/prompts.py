@@ -170,3 +170,102 @@ def build_plan_prompt(
         f"Generate the personalized move plan now."
         + (f" Where local steps apply, mention {city} specifically." if city else "")
     )
+
+
+COMPARE_SYSTEM = """You produce a side-by-side comparison of US state rules for someone relocating.
+
+For each topic, give BOTH states' actual rule in 1-2 plain-English sentences, plus the official source (agency name + a real .gov/official URL). Cover real, current rules — deadlines, rates, requirements.
+
+Hard rules:
+- comparable_key: short snake_case topic id (e.g. "drivers_license_deadline"). The two states' rows must use the SAME key per topic.
+- category: one of taxes, driving, housing, healthcare, education, legal.
+- is_gotcha: true only for surprising / costly / risky differences a mover would not expect.
+- source_url must be a real official source (state DMV, Department of Revenue, Secretary of State, etc.). Never invent a URL you are unsure of — use the agency's main official domain.
+- Be accurate; if unsure of an exact number, describe the rule qualitatively rather than guessing a figure."""
+
+
+def build_compare_prompt(from_state: str, to_state: str, category: str | None) -> str:
+    scope = (
+        f"only the '{category}' category"
+        if category
+        else "these categories: taxes, driving, housing, healthcare, education, legal"
+    )
+    return (
+        f"Compare relocating from {from_state} to {to_state}. Produce comparison rows covering {scope}. "
+        f"Aim for the topics that matter most to a mover (≈8-14 rows across all categories, or 3-6 for a single category)."
+    )
+
+
+COST_DIRECT_SYSTEM = """You estimate the full cost impact of moving between two US states.
+
+Return structured numbers for BOTH states:
+- income_tax: estimated annual STATE income tax on the given salary (0 for no-income-tax states).
+- property_tax: estimated annual property tax if they own (home_value x typical effective rate); 0 if renting.
+- sales_tax: estimated annual sales tax on taxable spending.
+- take_home: salary minus state income tax.
+- rpp_index: cost-of-living index (US average = 100).
+- Per-state estimated monthly rent, groceries, utilities (typical, for the city if given else the metro).
+- salary_equivalence: the gross salary in the destination giving the same take-home purchasing power as the origin salary.
+- explanation: 2-4 sentences on whether the move is cheaper/pricier and the biggest driver.
+
+Hard rules: figures are approximate estimates, not quotes or tax advice. Keep them realistic and internally consistent (higher-index state proportionally pricier). Never say "as an AI"."""
+
+
+def build_cost_direct_prompt(
+    from_state: str,
+    to_state: str,
+    salary: float,
+    filing: str,
+    housing: str,
+    home_value: float | None,
+    monthly_spending: float | None,
+    city: str | None,
+) -> str:
+    dest = f"{city}, {to_state}" if city else to_state
+    home = f"${int(home_value):,}" if (housing == "own" and home_value) else "n/a (renting)"
+    spend = f"${int(monthly_spending):,}/mo" if monthly_spending else "estimate from salary"
+    return (
+        f"Person earns ${int(salary):,}/year, files as {filing}, will {housing} their home "
+        f"(home value: {home}), monthly spending: {spend}. Moving from {from_state} to {dest}. "
+        f"Estimate the full cost breakdown for both states now."
+    )
+
+
+SAFETY_DIRECT_SYSTEM = """You report safety and rent data for two US states for someone relocating.
+
+For BOTH states provide:
+- violent_per_100k and property_per_100k: most recent reported crime rates per 100,000 (FBI UCR or state data).
+- source and source_url: where the crime figure comes from (e.g. "FBI UCR 2023" + a real official URL).
+- year: the data year.
+For the DESTINATION state provide median monthly rent for 5-6 major cities (real cities, ascending typical figures), plus a rent source label + URL.
+
+Hard rules: use the most recent real data you know; crime/rent data lags ~1 year, so do not invent a future year. Figures are approximate — never present as exact or as advice. Never say "as an AI"."""
+
+
+def build_safety_prompt(from_state: str, to_state: str) -> str:
+    return (
+        f"Report safety (crime rates) for {from_state} and {to_state}, and median rent across major "
+        f"cities of {to_state}. Use the most recent real data available."
+    )
+
+
+CITIES_SYSTEM = """You help someone who has chosen a US state but not yet a city/town.
+
+Profile the top cities/towns to consider, compared across every aspect a mover weighs:
+cost of living, rent, safety, job market, climate, and lifestyle/vibe.
+
+Hard rules:
+- Cover a useful RANGE: big metros, more affordable options, and family-friendly/smaller towns — not just the biggest cities.
+- cost_index: cost of living with US average = 100. median_rent: typical monthly rent in USD. Keep numbers realistic and approximate.
+- safety, job_market, climate, vibe: short plain-English descriptors (a few words).
+- best_for: a few audience tags (Families, Young professionals, Retirees, Students, Budget-conscious, Outdoorsy).
+- pros/cons: 2-3 short, honest points each.
+- overview: 2-4 sentences helping the person choose (who should look where).
+- Figures are approximate estimates, not exact data; never say "as an AI"."""
+
+
+def build_cities_prompt(state: str, limit: int) -> str:
+    return (
+        f"The user is moving to {state} but hasn't picked a city. List the top {limit} cities/towns "
+        f"to consider and profile each across all aspects, then give the overview guidance."
+    )

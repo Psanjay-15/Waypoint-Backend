@@ -17,12 +17,9 @@ class MovePlan(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     device_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    from_state: Mapped[str] = mapped_column(
-        String(2), ForeignKey("states.code"), nullable=False
-    )
-    to_state: Mapped[str] = mapped_column(
-        String(2), ForeignKey("states.code"), nullable=False
-    )
+    # No FK to states — plans are LLM-generated for any state, not just seeded ones.
+    from_state: Mapped[str] = mapped_column(String(2), nullable=False)
+    to_state: Mapped[str] = mapped_column(String(2), nullable=False)
     move_date: Mapped[date] = mapped_column(Date, nullable=False)
     quiz_answers: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

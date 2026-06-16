@@ -14,6 +14,7 @@ from app.llm.base import LLMProvider
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.grok_provider import GrokProvider
 from app.llm.openai_provider import OpenAIProvider
+from app.llm.perplexity_provider import PerplexityProvider
 
 log = get_logger(__name__)
 
@@ -24,6 +25,7 @@ _REGISTRY: dict[str, type[LLMProvider]] = {
     "anthropic": AnthropicProvider,
     "gemini": GeminiProvider,
     "grok": GrokProvider,
+    "perplexity": PerplexityProvider,
 }
 
 

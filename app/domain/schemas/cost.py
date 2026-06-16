@@ -90,6 +90,26 @@ class LivingEstimateOut(BaseModel):
     monthly_total: int
 
 
+class LlmStateCost(BaseModel):
+    state_code: str
+    state_name: str
+    income_tax: int
+    property_tax: int
+    sales_tax: int
+    take_home: int
+    rpp_index: float
+    monthly_rent: int
+    monthly_groceries: int
+    monthly_utilities: int
+
+
+class LlmCostResult(BaseModel):
+    from_cost: LlmStateCost
+    to_cost: LlmStateCost
+    salary_equivalence: int
+    explanation: str
+
+
 class CostResponse(BaseModel):
     from_state: str
     to_state: str

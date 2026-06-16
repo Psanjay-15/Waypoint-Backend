@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     chat,
+    cities,
     compare,
     cost,
     emergency,
@@ -25,4 +26,5 @@ api_router.include_router(places.router, tags=["places"])
 api_router.include_router(cost.router, tags=["cost"])
 api_router.include_router(services.router, tags=["services"])
 api_router.include_router(livability.router, tags=["livability"])
+api_router.include_router(cities.router, tags=["cities"])
 api_router.include_router(providers.router, tags=["providers"])

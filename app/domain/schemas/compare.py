@@ -59,3 +59,22 @@ class GotchasResponse(BaseModel):
     to_state: str
     gotchas: list[FactOut]
     disclaimer: str
+
+
+class LlmCompareFact(BaseModel):
+    summary: str
+    source_name: str
+    source_url: str
+
+
+class LlmCompareRow(BaseModel):
+    comparable_key: str
+    category: str
+    title: str
+    is_gotcha: bool = False
+    from_fact: LlmCompareFact
+    to_fact: LlmCompareFact
+
+
+class LlmCompareResult(BaseModel):
+    rows: list[LlmCompareRow]

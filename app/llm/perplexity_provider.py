@@ -28,42 +28,47 @@ from app.llm.prompts import (
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
-class GrokProvider(LLMProvider):
-    """xAI Grok — OpenAI-compatible API, JSON-object mode + local validation."""
+class PerplexityProvider(LLMProvider):
+    """Perplexity Sonar — OpenAI-compatible API that searches the live web and
+    returns answers with real citations. Best suited to the free-form, fact-
+    seeking calls (grounded_answer / general_answer); structured calls use a
+    JSON-schema hint and local validation."""
 
-    name = "grok"
-    default_model = "grok-3-mini"
+    name = "perplexity"
 
     def __init__(self) -> None:
+        self.default_model = settings.perplexity_model
         self._client = AsyncOpenAI(
-            api_key=settings.grok_api_key, base_url=settings.grok_base_url
+            api_key=settings.perplexity_api_key, base_url=settings.perplexity_base_url
         )
 
-    async def _generate(
-        self, system: str, user: str, schema: type[SchemaT], max_tokens: int
-    ) -> SchemaT:
-        schema_hint = (
-            f"\n\nRespond with ONLY a JSON object matching this JSON Schema:\n"
-            f"{json.dumps(schema.model_json_schema())}"
-        )
+    async def _complete(self, system: str, user: str, max_tokens: int) -> str:
         try:
             resp = await self._client.chat.completions.create(
                 model=self.default_model,
                 messages=[
-                    {"role": "system", "content": system + schema_hint},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                response_format={"type": "json_object"},
                 max_tokens=max_tokens,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             raise _map_error(exc, self.name) from exc
-        text = self._strip_code_fences(resp.choices[0].message.content or "")
+        return (resp.choices[0].message.content or "").strip()
+
+    async def _generate(
+        self, system: str, user: str, schema: type[SchemaT], max_tokens: int
+    ) -> SchemaT:
+        hint = (
+            "\n\nRespond with ONLY a JSON object matching this schema, no prose:\n"
+            f"{json.dumps(schema.model_json_schema())}"
+        )
+        text = self._strip_code_fences(await self._complete(system + hint, user, max_tokens))
         if not text:
             raise LLMError(f"{self.name}: empty response")
         try:
             return schema.model_validate_json(text)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             raise LLMError(f"{self.name}: invalid structured output ({exc})") from exc
 
     async def grounded_answer(
@@ -74,18 +79,13 @@ class GrokProvider(LLMProvider):
         to_state: str | None,
     ) -> str:
         user = build_chat_prompt(question, chunks, from_state, to_state)
-        try:
-            resp = await self._client.chat.completions.create(
-                model=self.default_model,
-                messages=[
-                    {"role": "system", "content": GROUNDED_QA_SYSTEM},
-                    {"role": "user", "content": user},
-                ],
-                max_tokens=2000,
-            )
-        except Exception as exc:
-            raise _map_error(exc, self.name) from exc
-        return (resp.choices[0].message.content or "").strip()
+        return await self._complete(GROUNDED_QA_SYSTEM, user, max_tokens=2000)
+
+    async def general_answer(
+        self, question: str, from_state: str | None, to_state: str | None
+    ) -> str:
+        user = build_general_prompt(question, from_state, to_state)
+        return await self._complete(GENERAL_QA_SYSTEM, user, max_tokens=800)
 
     async def generate_plan(
         self,
@@ -100,36 +100,13 @@ class GrokProvider(LLMProvider):
         return await self._generate(PLAN_SYSTEM, user, GeneratedPlan, max_tokens=4096)
 
     async def estimate_costs(self, user_prompt: str) -> CostNarrative:
-        return await self._generate(
-            COST_ESTIMATE_SYSTEM, user_prompt, CostNarrative, max_tokens=1024
-        )
+        return await self._generate(COST_ESTIMATE_SYSTEM, user_prompt, CostNarrative, max_tokens=1024)
 
     async def assess_city(self, user_prompt: str) -> CityFit:
-        return await self._generate(
-            CITY_FIT_SYSTEM, user_prompt, CityFit, max_tokens=512
-        )
+        return await self._generate(CITY_FIT_SYSTEM, user_prompt, CityFit, max_tokens=512)
 
     async def structured(self, system, user, schema, max_tokens: int = 2048):
         return await self._generate(system, user, schema, max_tokens=max_tokens)
-
-    async def general_answer(
-        self, question: str, from_state: str | None, to_state: str | None
-    ) -> str:
-        try:
-            resp = await self._client.chat.completions.create(
-                model=self.default_model,
-                messages=[
-                    {"role": "system", "content": GENERAL_QA_SYSTEM},
-                    {
-                        "role": "user",
-                        "content": build_general_prompt(question, from_state, to_state),
-                    },
-                ],
-                max_tokens=600,
-            )
-        except Exception as exc:
-            raise _map_error(exc, self.name) from exc
-        return (resp.choices[0].message.content or "").strip()
 
 
 def _map_error(exc: Exception, provider: str) -> LLMError:

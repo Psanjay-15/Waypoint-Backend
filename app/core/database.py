@@ -44,7 +44,10 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-_ADDITIVE_MIGRATIONS: tuple[str, ...] = ()
+_ADDITIVE_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE move_plans DROP CONSTRAINT IF EXISTS move_plans_from_state_fkey",
+    "ALTER TABLE move_plans DROP CONSTRAINT IF EXISTS move_plans_to_state_fkey",
+)
 
 
 async def create_all() -> None:

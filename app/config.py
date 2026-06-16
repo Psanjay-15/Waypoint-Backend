@@ -39,6 +39,9 @@ class Settings:
         self.gemini_api_key: str | None = _env("GEMINI_API_KEY")
         self.grok_api_key: str | None = _env("GROK_API_KEY")
         self.grok_base_url: str | None = _env("GROK_BASE_URL")
+        self.perplexity_api_key: str | None = _env("PERPLEXITY_API_KEY")
+        self.perplexity_base_url: str = _env("PERPLEXITY_BASE_URL") or "https://api.perplexity.ai"
+        self.perplexity_model: str = _env("PERPLEXITY_MODEL") or "sonar"
 
         self.default_llm_provider: str | None = _env("DEFAULT_LLM_PROVIDER")
         self.llm_fallback_order: str = _env("LLM_FALLBACK_ORDER") or ""
@@ -73,6 +76,7 @@ class Settings:
             "anthropic": self.anthropic_api_key,
             "gemini": self.gemini_api_key,
             "grok": self.grok_api_key,
+            "perplexity": self.perplexity_api_key,
         }
         return [name for name, key in keys.items() if key]
 
