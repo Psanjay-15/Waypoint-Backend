@@ -299,3 +299,130 @@ def suggestions(to_name: str) -> list[str]:
         f"Steps to register my car in {to_name}?",
         "How do I enroll my kids in school?",
     ]
+
+
+# ── Cities ───────────────────────────────────────────────────────────────────
+def cities_overview(state: dict) -> dict:
+    idx = state["costIndex"]
+    out = []
+    for rec in state["cities"]:
+        rent_mult = TIER_RENT.get(rec["tier"], 1.0)
+        safety = _seeded(rec["city"] + "citysafe", 70, 93)
+        out.append(
+            {
+                "city": rec["city"],
+                "tier": rec["tier"],
+                "areaCount": len(rec["areas"]),
+                "topAreas": rec["areas"][:3],
+                "medianRent": round(1500 * idx * rent_mult),
+                "safety": safety,
+                "fitScore": round((TIER_SCORE.get(rec["tier"], 80) + safety) / 2),
+            }
+        )
+    return {"state": state["name"], "cities": out}
+
+
+# ── Safety / livability ──────────────────────────────────────────────────────
+_GRADES = [(90, "A"), (80, "B"), (70, "C"), (60, "D"), (0, "F")]
+
+
+def safety_report(state: dict) -> dict:
+    code = state["code"]
+    violent = _seeded(code + "violent", 180, 650)  # per 100k
+    prop = _seeded(code + "prop", 1200, 3200)
+    score = max(
+        20,
+        min(98, 100 - round((violent - 180) / 470 * 60) - round((prop - 1200) / 2000 * 20)),
+    )
+    grade = next(g for t, g in _GRADES if score >= t)
+    cities = sorted(
+        ({"city": c["city"], "safety": _seeded(c["city"] + "citysafe", 70, 93)} for c in state["cities"]),
+        key=lambda c: -c["safety"],
+    )
+    return {
+        "stateCode": code,
+        "stateName": state["name"],
+        "violentPer100k": violent,
+        "propertyPer100k": prop,
+        "score": score,
+        "grade": grade,
+        "cities": cities,
+    }
+
+
+def _phone(seed: str) -> str:
+    a = _seeded(seed + "a", 201, 989)
+    b = _seeded(seed + "b", 201, 989)
+    c = _seeded(seed + "c", 1000, 9999)
+    return f"({a}) {b}-{c}"
+
+
+# ── Explore (nearby places) ──────────────────────────────────────────────────
+_PLACE_BANK = {
+    "Groceries": ["Whole Foods Market", "Trader Joe's", "Local Co-op", "Fresh Market"],
+    "Healthcare": ["Regional Medical Center", "Urgent Care Clinic", "Family Health Center"],
+    "Parks": ["Riverside Park", "Botanical Garden", "Community Greenway"],
+    "Schools": ["Public Elementary", "STEM Academy", "Community College"],
+    "Dining": ["Downtown Food Hall", "Taco Row", "Coffee District"],
+    "Fitness": ["YMCA", "Climbing Gym", "Yoga Studio"],
+}
+
+
+def explore_places(state: dict, city: str | None) -> dict:
+    rec = _city_record(state, city)
+    cn = rec["city"]
+    places = []
+    for cat, names in _PLACE_BANK.items():
+        for n in names[:3]:
+            seed = cn + cat + n
+            places.append(
+                {
+                    "category": cat,
+                    "name": n,
+                    "area": rec["areas"][_seeded(seed, 0, len(rec["areas"]) - 1)],
+                    "rating": round(3.6 + _seeded(seed + "r", 0, 13) / 10, 1),
+                    "distance": f"{_seeded(seed + 'd', 1, 18)} min",
+                }
+            )
+    return {"state": state["name"], "city": cn, "places": places}
+
+
+# ── Services (movers / utilities / providers) ────────────────────────────────
+_SERVICE_BANK = {
+    "Movers": ["Two Men & a Truck", "Allied Van Lines", "Bellhop Movers"],
+    "Utilities": ["City Power & Light", "Metro Water", "Regional Gas Co"],
+    "Internet": ["Xfinity", "AT&T Fiber", "Spectrum"],
+    "Storage": ["Public Storage", "CubeSmart", "Extra Space Storage"],
+    "Home services": ["HandyPro", "CleanCrew", "GreenLawn Care"],
+}
+
+
+def services_directory(state: dict, city: str | None) -> dict:
+    rec = _city_record(state, city)
+    cn = rec["city"]
+    groups = []
+    for cat, names in _SERVICE_BANK.items():
+        providers = [
+            {
+                "name": n,
+                "rating": round(3.5 + _seeded(cn + n, 0, 14) / 10, 1),
+                "reviews": _seeded(cn + n + "rv", 40, 900),
+                "phone": _phone(cn + n),
+            }
+            for n in names
+        ]
+        groups.append({"category": cat, "providers": providers})
+    return {"state": state["name"], "city": cn, "groups": groups}
+
+
+# ── Emergency contacts ───────────────────────────────────────────────────────
+def emergency_directory(state: dict, city: str | None) -> dict:
+    name = state["name"]
+    contacts = [
+        {"agency": "Emergency — Police, Fire, Medical", "kind": "all", "phone": "911", "note": "Universal emergency line"},
+        {"agency": "988 Suicide & Crisis Lifeline", "kind": "mental_health", "phone": "988", "note": "24/7 support"},
+        {"agency": "Poison Control", "kind": "poison", "phone": "1-800-222-1222", "note": "National hotline"},
+        {"agency": f"{name} Highway Patrol", "kind": "police", "phone": None, "note": "Non-emergency — find the local number on the official state site"},
+        {"agency": f"{name} DMV / Motor Vehicles", "kind": "dmv", "phone": None, "note": "Licensing & registration — see the official state site"},
+    ]
+    return {"state": name, "city": city or state["cities"][0]["city"], "contacts": contacts}
