@@ -1,31 +1,54 @@
-from fastapi import APIRouter, Query
+from datetime import datetime, timezone
 
-from app.api.v1.deps import DeviceDep, SessionDep
-from app.domain.schemas.chat import ChatRequest, ChatResponse, ChatSuggestionsResponse
-from app.domain.services.chat_service import chat_service
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
+
+from app import llm
+from app.core.exceptions import UnknownStateError
+from app.db import chat_logs_col, states_col
+from app.domain.dataset import chat_context, chat_sources, suggestions
 
 router = APIRouter()
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest, db: SessionDep, device_id: DeviceDep) -> ChatResponse:
-    return await chat_service.ask(db, body, device_id)
+class ChatRequest(BaseModel):
+    question: str
+    fromState: str | None = None
+    toState: str | None = None
+    city: str | None = None
 
 
-@router.get("/chat/suggestions", response_model=ChatSuggestionsResponse)
-async def suggestions(
-    from_state: str | None = Query(None, min_length=2, max_length=2),
-    to_state: str | None = Query(None, min_length=2, max_length=2),
-) -> ChatSuggestionsResponse:
-    f = (from_state or "my current state").upper() if from_state else "my current state"
-    t = (to_state or "my new state").upper() if to_state else "my new state"
-    return ChatSuggestionsResponse(
-        suggestions=[
-            f"Do I need a new driver's license when moving from {f} to {t}, and how long do I have?",
-            f"How will my income taxes change moving from {f} to {t}?",
-            f"What happens to my health insurance when I move to {t}?",
-            f"When and how do I register my car in {t}?",
-            f"When can I register to vote in {t}?",
-            f"What surprising laws should I know about before moving to {t}?",
-        ]
+@router.post("/chat")
+async def chat(body: ChatRequest) -> dict:
+    to_code = (body.toState or "TX").strip().upper()
+    to_doc = await states_col().find_one({"_id": to_code})
+    if to_doc is None:
+        raise UnknownStateError(f"No data for state '{to_code}'")
+
+    from_doc = None
+    if body.fromState:
+        from_doc = await states_col().find_one({"_id": body.fromState.strip().upper()})
+    from_name = from_doc["name"] if from_doc else "your current state"
+
+    context = chat_context(to_doc, from_name, body.city)
+    answer = await llm.ask(body.question, context)  # raises LLMError -> 502
+    sources = chat_sources(body.question, to_doc["name"])
+
+    await chat_logs_col().insert_one(
+        {
+            "question": body.question,
+            "from_state": body.fromState,
+            "to_state": to_code,
+            "city": body.city,
+            "answer": answer,
+            "created_at": datetime.now(timezone.utc),
+        }
     )
+    return {"answer": answer, "sources": sources}
+
+
+@router.get("/chat/suggestions")
+async def chat_suggestions(to: str = Query("TX")) -> dict:
+    doc = await states_col().find_one({"_id": to.strip().upper()})
+    name = doc["name"] if doc else "your new state"
+    return {"suggestions": suggestions(name)}
