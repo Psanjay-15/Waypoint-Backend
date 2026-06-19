@@ -368,13 +368,36 @@ _PLACE_BANK = {
 }
 
 
+# Approximate geographic center per state — map gets a real, in-state view.
+STATE_CENTER = {
+    "AL": (32.78, -86.83), "AK": (61.37, -152.40), "AZ": (34.29, -111.66), "AR": (34.90, -92.44),
+    "CA": (37.18, -119.47), "CO": (39.00, -105.55), "CT": (41.62, -72.73), "DE": (39.15, -75.42),
+    "FL": (28.62, -82.45), "GA": (32.64, -83.44), "HI": (20.29, -156.37), "ID": (44.24, -114.48),
+    "IL": (40.06, -89.20), "IN": (39.89, -86.28), "IA": (42.07, -93.50), "KS": (38.50, -98.38),
+    "KY": (37.53, -85.30), "LA": (31.07, -92.00), "ME": (45.37, -69.24), "MD": (39.06, -76.80),
+    "MA": (42.26, -71.81), "MI": (44.35, -85.41), "MN": (46.28, -94.31), "MS": (32.74, -89.68),
+    "MO": (38.36, -92.48), "MT": (46.96, -109.63), "NE": (41.53, -99.80), "NV": (38.50, -117.02),
+    "NH": (43.68, -71.58), "NJ": (40.30, -74.52), "NM": (34.41, -106.11), "NY": (42.95, -75.53),
+    "NC": (35.56, -79.39), "ND": (47.45, -100.47), "OH": (40.29, -82.79), "OK": (35.59, -97.49),
+    "OR": (43.94, -120.56), "PA": (40.99, -77.60), "RI": (41.68, -71.56), "SC": (33.86, -80.95),
+    "SD": (44.30, -99.44), "TN": (35.86, -86.36), "TX": (31.05, -97.56), "UT": (39.32, -111.68),
+    "VT": (44.07, -72.67), "VA": (37.52, -78.85), "WA": (47.40, -120.55), "WV": (38.64, -80.62),
+    "WI": (44.62, -89.99), "WY": (42.99, -107.55),
+}
+
+
 def explore_places(state: dict, city: str | None) -> dict:
     rec = _city_record(state, city)
     cn = rec["city"]
+    base = STATE_CENTER.get(state["code"], (39.5, -98.35))
+    clat = base[0] + _seeded(cn + "lat", -25, 25) / 100   # city center ±0.25°
+    clng = base[1] + _seeded(cn + "lng", -25, 25) / 100
     places = []
     for cat, names in _PLACE_BANK.items():
         for n in names[:3]:
             seed = cn + cat + n
+            plat = round(clat + _seeded(seed + "plat", -25, 25) / 1000, 5)  # ±0.025° ≈ a few km
+            plng = round(clng + _seeded(seed + "plng", -25, 25) / 1000, 5)
             places.append(
                 {
                     "category": cat,
@@ -382,9 +405,18 @@ def explore_places(state: dict, city: str | None) -> dict:
                     "area": rec["areas"][_seeded(seed, 0, len(rec["areas"]) - 1)],
                     "rating": round(3.6 + _seeded(seed + "r", 0, 13) / 10, 1),
                     "distance": f"{_seeded(seed + 'd', 1, 18)} min",
+                    "lat": plat,
+                    "lng": plng,
+                    "osm_id": hash(seed) % 100_000_000,
+                    "directions_url": f"https://www.google.com/maps/search/?api=1&query={plat},{plng}",
                 }
             )
-    return {"state": state["name"], "city": cn, "places": places}
+    return {
+        "state": state["name"],
+        "city": cn,
+        "center": {"lat": round(clat, 5), "lng": round(clng, 5)},
+        "places": places,
+    }
 
 
 # ── Services (movers / utilities / providers) ────────────────────────────────
