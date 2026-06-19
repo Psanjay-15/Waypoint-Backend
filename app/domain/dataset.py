@@ -22,6 +22,7 @@ FACILITY_BANK = {
 }
 
 NO_SALES_TAX = {"OR", "MT", "NH", "DE", "AK"}
+AMBIGUOUS_STATE_CODES = {"HI", "IN", "ME", "OK", "OR"}
 
 
 def _seeded(seed: str, lo: int, hi: int) -> int:
@@ -252,16 +253,64 @@ def cost_compare(from_state: dict, to_state: dict, req: dict) -> dict:
 
 
 # ── Chat grounding helpers ───────────────────────────────────────────────────
-def chat_context(to_state: dict, from_name: str, city: str | None) -> str:
-    s = to_state
-    where = f"{city}, {s['name']}" if city else s["name"]
-    return (
-        f"Move: {from_name} -> {s['name']} (destination: {where}).\n"
-        f"Climate: {s['climate']}.\n"
-        f"State income tax: {s['tax']}.\n"
-        f"Job market score: {s['jobs']}/100.\n"
-        f"Cost of living index: {s['costIndex']}x the national average."
+def mentioned_states(question: str, states: list[dict]) -> list[dict]:
+    """Return state docs explicitly named in a user prompt, preserving prompt order."""
+    hits: list[tuple[int, dict]] = []
+    seen: set[str] = set()
+
+    for state in states:
+        name = state["name"]
+        code = state["code"]
+        name_match = re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", question, re.IGNORECASE)
+        code_match = None
+        if code not in AMBIGUOUS_STATE_CODES:
+            # Only accept state abbreviations when typed uppercase. This keeps
+            # natural words like "in", "or", and "me" from becoming states.
+            code_match = re.search(rf"(?<![A-Za-z]){re.escape(code)}(?![A-Za-z])", question)
+
+        match = name_match or code_match
+        if match and code not in seen:
+            seen.add(code)
+            hits.append((match.start(), state))
+
+    return [state for _, state in sorted(hits, key=lambda item: item[0])]
+
+
+def _state_chat_profile(state: dict, city: str | None = None) -> str:
+    cities = ", ".join(c["city"] for c in state.get("cities", [])[:4])
+    place = f"{city}, {state['name']}" if city else state["name"]
+    profile = (
+        f"- {place} ({state['code']}): climate {state['climate']}; "
+        f"state income tax {state['tax']}; job market score {state['jobs']}/100; "
+        f"cost of living index {state['costIndex']}x national average"
     )
+    return profile + (f"; dataset cities: {cities}." if cities else ".")
+
+
+def chat_context(
+    to_state: dict,
+    from_name: str,
+    city: str | None,
+    prompt_states: list[dict] | None = None,
+) -> str:
+    where = f"{city}, {to_state['name']}" if city else to_state["name"]
+    lines = [
+        "Selected UI corridor (default context, not a restriction):",
+        f"- Move: {from_name} -> {to_state['name']} (destination: {where}).",
+        "Selected destination profile:",
+        _state_chat_profile(to_state, city),
+    ]
+
+    extras = [state for state in prompt_states or [] if state["code"] != to_state["code"]]
+    if extras:
+        lines.extend(
+            [
+                "States explicitly named in the user's question (prioritize these over the selected UI corridor when relevant):",
+                *(_state_chat_profile(state) for state in extras),
+            ]
+        )
+
+    return "\n".join(lines)
 
 
 _SOURCE_RULES = [
@@ -284,11 +333,12 @@ _SOURCE_RULES = [
 ]
 
 
-def chat_sources(question: str, to_name: str) -> list[dict]:
+def chat_sources(question: str, to_name: str, prompt_state_names: list[str] | None = None) -> list[dict]:
     q = question.lower()
+    source_label = " / ".join(prompt_state_names or []) or to_name
     for pattern, srcs in _SOURCE_RULES:
         if pattern.search(q):
-            return [{"title": t.format(to=to_name), "url": u} for t, u in srcs]
+            return [{"title": t.format(to=source_label), "url": u} for t, u in srcs]
     return [{"title": "USA.gov — Moving to a new state", "url": "https://www.usa.gov/"}]
 
 
@@ -403,8 +453,12 @@ def explore_places(state: dict, city: str | None) -> dict:
                     "category": cat,
                     "name": n,
                     "area": rec["areas"][_seeded(seed, 0, len(rec["areas"]) - 1)],
+                    "address": f"{_seeded(seed + 'street', 100, 980)} {cn} Ave",
                     "rating": round(3.6 + _seeded(seed + "r", 0, 13) / 10, 1),
                     "distance": f"{_seeded(seed + 'd', 1, 18)} min",
+                    "phone": _phone(seed),
+                    "website": "https://www.google.com/search?q="
+                    + f"{cn.replace(' ', '+')}+{cat.replace(' ', '+')}",
                     "lat": plat,
                     "lng": plng,
                     "osm_id": hash(seed) % 100_000_000,
@@ -413,8 +467,19 @@ def explore_places(state: dict, city: str | None) -> dict:
             )
     return {
         "state": state["name"],
+        "stateCode": state["code"],
         "city": cn,
         "center": {"lat": round(clat, 5), "lng": round(clng, 5)},
+        "pros": [
+            f"{cn} has a practical mix of daily essentials across {len(rec['areas'])} tracked areas.",
+            f"{state['name']} cost index is {state['costIndex']}x the national average.",
+            f"Job market score is {state['jobs']}/100 for a quick relocation read.",
+        ],
+        "cons": [
+            "Verify hours, reviews, and appointment availability before relying on a provider.",
+            "Commute and traffic can change sharply by neighborhood and time of day.",
+            f"State tax context: {state['tax']}. Confirm official rules before making financial decisions.",
+        ],
         "places": places,
     }
 
