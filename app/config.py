@@ -40,7 +40,7 @@ class Settings:
 
         # OpenAI — powers the live assistant + cost estimates.
         self.openai_api_key: str | None = _env("OPENAI_API_KEY")
-        self.openai_model: str = _env("OPENAI_MODEL") or "gpt-4o-mini"
+        self.openai_model: str = _env("OPENAI_MODEL") or "gpt-4.1-2025-04-14"
 
         self.cors_origins: str = _env("CORS_ORIGINS") or ""
         self.cors_origin_regex: str | None = _env("CORS_ORIGIN_REGEX")

@@ -41,7 +41,7 @@ async def ask(question: str, context: str) -> str:
     try:
         resp = await client.chat.completions.create(
             model=settings.openai_model,
-            max_tokens=600,
+            max_tokens=10000,
             temperature=0.4,
             messages=[
                 {"role": "system", "content": SYSTEM},
