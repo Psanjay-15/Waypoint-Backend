@@ -523,3 +523,66 @@ def emergency_directory(state: dict, city: str | None) -> dict:
         {"agency": f"{name} DMV / Motor Vehicles", "kind": "dmv", "phone": None, "note": "Licensing & registration — see the official state site"},
     ]
     return {"state": name, "city": city or state["cities"][0]["city"], "contacts": contacts}
+
+
+# ── Relocation rules (what changes between states) ───────────────────────────
+# Recreational + medical cannabis (broadly documented; verify current law).
+_REC_CANNABIS = {
+    "AK", "AZ", "CA", "CO", "CT", "DE", "IL", "ME", "MD", "MA", "MI", "MN", "MO",
+    "MT", "NV", "NJ", "NM", "NY", "OH", "OR", "RI", "VT", "VA", "WA",
+}
+_CBD_ONLY = {"ID", "KS", "NE", "SC", "WY", "IN", "WI", "TN", "NC", "GA", "TX", "IA"}
+
+# States that require a safety and/or emissions inspection to register.
+_REQUIRE_INSPECTION = {
+    "TX", "NY", "PA", "VA", "NH", "ME", "VT", "MA", "RI", "MO", "WV", "LA",
+    "NC", "GA", "IL", "OH", "CA", "WA", "NV", "AZ", "CO", "UT", "NM",
+}
+
+# Driver's-license transfer deadline (days after establishing residency).
+_LICENSE_DAYS = {"CA": 10, "TX": 90, "FL": 30, "NY": 30, "WA": 30, "AZ": 30,
+                 "CO": 30, "GA": 30, "NC": 60, "VA": 60, "PA": 60, "OH": 30}
+# Vehicle-registration deadline (days).
+_REG_DAYS = {"CA": 20, "TX": 30, "FL": 30, "NY": 30, "WA": 30, "CO": 90,
+             "AZ": 15, "GA": 30, "NC": 60, "VA": 30, "PA": 20, "OH": 30}
+
+
+def _cannabis(code: str) -> str:
+    if code in _REC_CANNABIS:
+        return "Recreational & medical"
+    if code in _CBD_ONLY:
+        return "CBD / limited only"
+    return "Medical only"
+
+
+def _sales(code: str) -> str:
+    return "No state sales tax" if code in NO_SALES_TAX else "~6–9% (state + local)"
+
+
+def state_rules(state: dict) -> dict:
+    code = state["code"]
+    return {
+        "Income tax": state["tax"],
+        "Sales tax": _sales(code),
+        "Driver's license": f"Transfer within {_LICENSE_DAYS.get(code, 30)} days of residency",
+        "Vehicle registration": f"Register within {_REG_DAYS.get(code, 30)} days",
+        "Vehicle inspection": "Required to register" if code in _REQUIRE_INSPECTION else "Not required",
+        "Recreational cannabis": _cannabis(code),
+        "Voter registration": "Re-register in-state (~15–30 days before an election)",
+    }
+
+
+def compare_rules(from_state: dict, to_state: dict) -> dict:
+    a, b = state_rules(from_state), state_rules(to_state)
+    rows = [
+        {"category": k, "from": a[k], "to": b[k], "changed": a[k] != b[k]}
+        for k in a
+    ]
+    return {
+        "fromState": from_state["code"],
+        "fromName": from_state["name"],
+        "toState": to_state["code"],
+        "toName": to_state["name"],
+        "rules": rows,
+        "disclaimer": "General guidance only — rules change; verify with the official state agency.",
+    }
